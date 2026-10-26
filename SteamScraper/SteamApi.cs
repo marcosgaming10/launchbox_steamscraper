@@ -35,12 +35,6 @@ namespace SteamScraper
         {
             using (var httpClient = new HttpClient())
             {
-                // Impostiamo un User-Agent per evitare blocchi da parte di Steam
-                if (!httpClient.DefaultRequestHeaders.Contains("User-Agent"))
-                {
-                    httpClient.DefaultRequestHeaders.Add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)");
-                }
-
                 string gameUrl = "https://store.steampowered.com/api/appdetails?cc=UK&appids=" + appId;
                 var json = await httpClient.GetStringAsync(gameUrl);
 
@@ -79,18 +73,13 @@ namespace SteamScraper
                 {
                     developer = null;
                 }
-
-                // --- LOGICA AGGIORNATA PER IL RECUPERO DEL TRAILER ---
-                var movies = jsonContent[appId]["data"]["movies"];
-                movie = null;
-                if (movies != null && movies.HasValues)
-                {
-                    var firstMovie = movies[0];
-                    // Tenta prima il formato MP4 max, poi 480, poi ripiega sui formati webm
-                    movie = (string)(firstMovie["mp4"]?["max"] ?? firstMovie["mp4"]?["480"] 
-                                     ?? firstMovie["webm"]?["max"] ?? firstMovie["webm"]?["480"]);
-                }
-
+                // Steam has changed the "movies" shape over time. Older responses expose downloadable
+                // "webm"/"mp4" objects with "480"/"max" URLs, while newer ones only provide streaming
+                // manifests (dash/hls) which would have to be stitched together.
+                // Probe for a direct file, otherwise fall back to null for now (skip downloading the trailer).
+                var firstMovie = jsonContent[appId]["data"]["movies"]?.FirstOrDefault();
+                movie = (string)(firstMovie?["webm"]?["480"] ?? firstMovie?["webm"]?["max"]
+                                 ?? firstMovie?["mp4"]?["480"] ?? firstMovie?["mp4"]?["max"]);
                 if (jsonContent[appId]["data"]["screenshots"] != null)
                 {
                     screenshots = (JArray)jsonContent[appId]["data"]["screenshots"];
@@ -200,6 +189,8 @@ namespace SteamScraper
 
             var dllPath = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location);
             var dllPathFinal = Path.Combine(dllPath, "properties.json");
+            // properties.json is optional. If it's missing or unreadable, fall back to
+            // default settings (custom Tags field disabled) rather than crashing.
             Properties jsonConfig = new Properties { customFields = "false" };
             if (File.Exists(dllPathFinal))
             {
@@ -246,6 +237,7 @@ namespace SteamScraper
         {
             try
             {
+                // Create directory if it doesn't exist
                 string directory = Path.GetDirectoryName(dest);
                 if (!Directory.Exists(directory))
                 {
@@ -255,12 +247,9 @@ namespace SteamScraper
                 using (HttpClient client = new HttpClient())
                 {
                     client.Timeout = TimeSpan.FromSeconds(30);
-                    if (!client.DefaultRequestHeaders.Contains("User-Agent"))
-                    {
-                        client.DefaultRequestHeaders.Add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)");
-                    }
                     var response = client.GetAsync(url).Result;
                     
+                    // Only proceed if successful
                     if (response.IsSuccessStatusCode)
                     {
                         var fileBytes = response.Content.ReadAsByteArrayAsync().Result;
@@ -290,10 +279,6 @@ namespace SteamScraper
             {
                 try
                 {
-                    if (!client.DefaultRequestHeaders.Contains("User-Agent"))
-                    {
-                        client.DefaultRequestHeaders.Add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)");
-                    }
                     HttpResponseMessage response = await client.GetAsync(url);
                     response.EnsureSuccessStatusCode();
                     return response.Content.Headers.ContentType.MediaType;
@@ -325,6 +310,7 @@ namespace SteamScraper
         [SupportedOSPlatform("windows7.0")]
         public static void SteamDBLink(string appId)
         {
+            //Additional Applications
             foreach (var addApp in SteamScraper.game.GetAllAdditionalApplications())
             {
                 if (addApp.Name == "Visit Steam Database page")
@@ -332,13 +318,9 @@ namespace SteamScraper
                     _ = SteamScraper.game.TryRemoveAdditionalApplication(addApp);
                 }
             }
-            // Controllo null-safety per evitare crash se SteamScraper.game non è inizializzato
-            if (SteamScraper.game != null)
-            {
-                var additionalApplication = SteamScraper.game.AddNewAdditionalApplication();
-                additionalApplication.Name = "Visit Steam Database page";
-                additionalApplication.ApplicationPath = "https://steamdb.info/app/" + appId + "/";
-            }
+            var additionalApplication = SteamScraper.game.AddNewAdditionalApplication();
+            additionalApplication.Name = "Visit Steam Database page";
+            additionalApplication.ApplicationPath = "https://steamdb.info/app/" + appId + "/";
         }
     }
 }
